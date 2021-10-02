@@ -21,12 +21,13 @@ def main():
         cnt = 0	
         while offset != -1:
             cnt += 1
+            bpp = ftmp[offset+4]
             nextifeg = ftmp.find(b"EndOfPAF\0", offset+1)
             if nextifeg == -1:
                 nextifeg = None
             else:
                 nextifeg += 9
-            open(f"{sys.argv[1]}_ext_paf/PAF_{cnt}_{V}.paf", "wb").write(ftmp[offset:nextifeg])
+            open(f"{sys.argv[1]}_ext_paf/PAF_{cnt}_{V}_{bpp}.paf", "wb").write(ftmp[offset:nextifeg])
             offset = ftmp.find(f"PAF{V}".encode("ascii"), offset+1)	
 
 if __name__ == "__main__":
