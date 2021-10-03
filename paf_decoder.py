@@ -6,6 +6,7 @@ import logging
 from PIL import Image
 
 RAW = False
+FIX_1PX_DOTS = True
 
 def output_file(data: bytes, output: str, width: int, height: int, bpp: int):
     if bpp == 8:
@@ -23,6 +24,7 @@ def pafDecodeFrame(file_buf: io.BytesIO, width: int, height: int, bpp: int):
         index = num*3
         return RGB332[index:index+3]
     
+    p_bit = b""
     o_buf = bytearray()
     while file_buf.tell() < len(file_buf.getvalue()):       
         length = 1        
@@ -37,15 +39,24 @@ def pafDecodeFrame(file_buf: io.BytesIO, width: int, height: int, bpp: int):
         else:
             file_buf.seek(file_buf.tell()-1)
 
+
+
         if bpp == 8:
-            o_buf += rgb332_get(file_buf.read(1)[0])*length
+            p_bit = rgb332_get(file_buf.read(1)[0])
         else:
-            o_buf += file_buf.read(int(bpp/8))*length
+            p_bit = file_buf.read(int(bpp/8))
+
+        o_buf += p_bit*length
+
+    if bpp == 8:
+        bpp = 24
 
     if len(o_buf) < (width*height)*(int(bpp/8)):
-        padding_needed = (width*height)*(int(bpp/8))
-        o_buf += b"\0" * (padding_needed-len(o_buf))
-        assert len(o_buf) == padding_needed, f"{len(o_buf)} - {padding_needed}"
+        padding_needed = (width*height)
+        if not FIX_1PX_DOTS:
+            p_bit = b"\0"*int(bpp/8)
+        o_buf += p_bit * (padding_needed-int(len(o_buf)/(bpp/8)))
+        assert len(o_buf) == padding_needed*(bpp/8), f"{len(o_buf)} - {padding_needed}"
 
     return bytes(o_buf)
 
@@ -103,7 +114,7 @@ if __name__ == "__main__":
 
     file_buf.seek(frame_offsets[0])
 
-    for i in range(frames):
+    for i in range(frames):        
         paf_frames.append(io.BytesIO(file_buf.read(frame_offsets[i+1]-frame_offsets[i])))
 
     if RAW:
