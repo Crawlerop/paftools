@@ -3,7 +3,8 @@ import io
 import sys
 import struct
 import logging
-from PIL import Image
+
+from PIL import Image, ImageTk
 
 RAW = False
 
@@ -34,6 +35,26 @@ def output_file(data: bytes, output: str, width: int, height: int, bpp: int):
         Image.frombytes("RGB", (width, height), data, "raw", "BGR").save(output)    
     elif bpp == 32:
         aInvert(Image.frombytes("RGBA", (width, height), data, "raw", "BGRA")).save(output)
+
+def getFormat(data: bytes, width: int, height: int, bpp: int):
+    if bpp == 1:
+        temp = Image.frombytes("L", (width + ((8 - (width % 8)) if (width % 8) else 0), height), bytes([0 if x == 1 else 255 for x in data] if MONOCHROME_INVERT else [255 if x == 1 else 0 for x in data]))                
+        return temp.crop([0,0,width, height])        
+    elif bpp == 2:
+        temp = Image.frombytes("L", (width + ((4 - (width % 4)) if (width % 4) else 0), height), bytes(([0 if x >= 1 else 255 for x in data] if MONOCHROME_INVERT else [255 if x >= 1 else 0 for x in data]) if PAL_2BPP_IS_SINGLE else [PAL_2BPP_INVERT[x] for x in data] if MONOCHROME_INVERT else [PAL_2BPP[x] for x in data]))        
+        return temp.crop([0,0,width, height])        
+    elif bpp == 8:
+        temp = Image.frombytes("P", (width, height), data)
+        temp.putpalette(RGB332)
+        return temp
+    elif bpp == 16:
+        return Image.frombytes("RGB", (width, height), data, "raw", "BGR;16", 0, 1)  
+    elif bpp == 18:
+        return Image.frombytes("RGB", (width, height), data) 
+    elif bpp == 24:
+        return Image.frombytes("RGB", (width, height), data, "raw", "BGR")    
+    elif bpp == 32:
+        return aInvert(Image.frombytes("RGBA", (width, height), data, "raw", "BGRA"))        
 
 def rgb18to24(data: bytes):
     offset = 0
@@ -271,38 +292,51 @@ def aInvert(i1: Image.Image):
     p.putalpha(Image.frombytes("L", i1.size, a_data))
     return p
 
-if __name__ == "__main__":
-    file_buf = open(sys.argv[1], "rb")
-    assert file_buf.read(3) == b"PAF"
+class __PAFFrame():
+    def __init__(self, width, height, bpp, image):
+        self.width = width
+        self.height = height
+        self.bpp = bpp
+        self.image = image
+
+def loadPAF(file_buf):
+    assert file_buf.read(3) == b"PAF", "Not a valid PAF image."
+
     version = int(file_buf.read(1))
     assert version in [1,2,3], f"PAF{version} images is not supported."
+
     width_height_mode = ""
     bpp_frames_mode = ""
+
     width_height_size = 0
     bpp_frames_size = 0
     
     if version == 1:
         width_height_size = 1
         width_height_mode = "<B"
+
         bpp_frames_size = 1
         bpp_frames_mode = "<B"
     elif version == 2:
         width_height_size = 4
         width_height_mode = "<L"
+
         bpp_frames_size = 4
         bpp_frames_mode = "<L"
     elif version == 3:
         width_height_size = 4
         width_height_mode = "<L"
+
         bpp_frames_size = 1
         bpp_frames_mode = "<B"
     
     bpp = struct.unpack(bpp_frames_mode, file_buf.read(bpp_frames_size))[0]
     width = struct.unpack(width_height_mode, file_buf.read(width_height_size))[0]
+
     height = struct.unpack(width_height_mode, file_buf.read(width_height_size))[0]
     frames = struct.unpack(bpp_frames_mode, file_buf.read(bpp_frames_size))[0]
 
-    assert bpp in [1,2,8,16,18,24,32], f"{bpp}-bit PAF images is not supported."    
+    assert bpp in [1,2,8,16,18,24,32], f"{bpp}-bit PAF images are not supported."    
 
     frame_offsets = []
     paf_frames = []
@@ -318,25 +352,171 @@ if __name__ == "__main__":
 
     for i in range(frames):                
         paf_frames.append(io.BytesIO(file_buf.read(frame_offsets[i+1]-frame_offsets[i])))
+        
+    isStart = True
+    canvas = None
 
-    if RAW:        
-        outr = open(sys.argv[2], "wb")
-
-    if frames <= 1:
-        if RAW:
-            outr.write(pafDecodeFrame(paf_frames[0], width, height, bpp))
+    for frame in paf_frames:            
+        if isStart:
+            canvas = pafDecodeFrame(frame, width, height, bpp)
+            isStart = False
         else:
-            output_file(pafDecodeFrame(paf_frames[0], width, height, bpp), sys.argv[2], width, height, bpp)
+            canvas = pafXORBytes(canvas, pafDecodeFrame(frame, width, height, bpp))
+        yield __PAFFrame(width, height, bpp, getFormat(canvas, width, height, bpp))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        import tkinter as tk
+        from tkinter import messagebox, filedialog
+        imgTk = None
+
+        class PAFCanvas(tk.Canvas):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.bind("<Configure>", self.on_resize)  
+
+
+            def on_resize(self, event):
+                if imgTk:
+                    photo.delete("all")
+                    photo.create_image(event.width/2,event.height/2,anchor=tk.CENTER,image=imgTk)
+            
+        paf_images = None
+        curFrame = 0
+
+        def handleKeyboard(e):
+            global curFrame, paf_images
+            if e.keycode == 37:
+                if not paf_images: return
+                if curFrame <= 0: return
+                curFrame -= 1
+
+                setPafFrame(curFrame)
+            elif e.keycode == 39:
+                if not paf_images: return
+                if curFrame >= len(paf_images)-1: return
+
+                curFrame += 1
+                setPafFrame(curFrame)
+
+        def setPafFrame(frame):            
+            imgTk = ImageTk.PhotoImage(paf_images[frame].image)
+            infoBar.config(text=f"{paf_images[frame].width}x{paf_images[frame].height}x{paf_images[frame].bpp}bpp {frame+1} out of {len(paf_images)}")
+
+            photo.image = imgTk
+            photo.create_image(photo.winfo_width()/2,photo.winfo_height()/2,anchor=tk.CENTER,image=imgTk)
+
+        def openPaf():
+            global imgTk, paf_images, curFrame
+
+            file = filedialog.askopenfile("rb", filetypes=[("PAF image", "*.paf")])            
+            if file != None:                  
+                photo.delete("all")
+                paf_images = None
+                imgTk = None
+
+                try:
+                    paf_images = [x for x in loadPAF(file)]
+
+                    root.geometry(f"{max(256, paf_images[0].image.width)}x{max(256, paf_images[0].image.height)}")
+
+                    curFrame = 0                                                                  
+                    setPafFrame(0)
+                except Exception as e:                    
+                    messagebox.showerror("PAF Viewer", e)
+
+        root = tk.Tk()       
+        root.geometry("256x256") 
+        root.title = "PAF Viewer"
+
+        root.bind("<KeyPress>", handleKeyboard)
+
+        menu_bar = tk.Menu(root)
+        file_menu = tk.Menu(menu_bar, tearoff=0)
+        file_menu.add_command(label="Open", command=openPaf)
+        file_menu.add_command(label="Exit", command=root.quit)
+
+        menu_bar.add_cascade(label="File", menu=file_menu)
+
+        option_menu = tk.Menu(menu_bar, tearoff=0)
+        photo = PAFCanvas(root, bg="white", width=0, height=0)
+        photo.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        menu_bar.add_cascade(label="Option", menu=option_menu)
+
+        root.config(menu=menu_bar)
+
+        infoBar = tk.Label(root, text="PAF Viewer", relief=tk.SUNKEN, anchor="w")
+        infoBar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        root.mainloop()
     else:
-        canvas = pafDecodeFrame(paf_frames[0], width, height, bpp)
-        if RAW:
-            outr.write(canvas)
-        else:
-            output_file(canvas, f"{os.path.splitext(sys.argv[2])[0]}_1{os.path.splitext(sys.argv[2])[1]}", width, height, bpp)
+        file_buf = open(sys.argv[1], "rb")
+        assert file_buf.read(3) == b"PAF"
+        version = int(file_buf.read(1))
+        assert version in [1,2,3], f"PAF{version} images is not supported."
+        width_height_mode = ""
+        bpp_frames_mode = ""
+        width_height_size = 0
+        bpp_frames_size = 0
+        
+        if version == 1:
+            width_height_size = 1
+            width_height_mode = "<B"
+            bpp_frames_size = 1
+            bpp_frames_mode = "<B"
+        elif version == 2:
+            width_height_size = 4
+            width_height_mode = "<L"
+            bpp_frames_size = 4
+            bpp_frames_mode = "<L"
+        elif version == 3:
+            width_height_size = 4
+            width_height_mode = "<L"
+            bpp_frames_size = 1
+            bpp_frames_mode = "<B"
+        
+        bpp = struct.unpack(bpp_frames_mode, file_buf.read(bpp_frames_size))[0]
+        width = struct.unpack(width_height_mode, file_buf.read(width_height_size))[0]
+        height = struct.unpack(width_height_mode, file_buf.read(width_height_size))[0]
+        frames = struct.unpack(bpp_frames_mode, file_buf.read(bpp_frames_size))[0]
 
-        for f in range(frames-1):            
-            canvas = pafXORBytes(canvas, pafDecodeFrame(paf_frames[f+1], width, height, bpp))
+        assert bpp in [1,2,8,16,18,24,32], f"{bpp}-bit PAF images is not supported."    
+
+        frame_offsets = []
+        paf_frames = []
+
+        for _ in range(frames+1): 
+            frame_offsets.append(struct.unpack(">L", file_buf.read(4))[0])
+
+        file_buf.seek(frame_offsets[frames])
+        if (file_buf.read(9) != b"EndOfPAF\0"):
+            logging.warning("Missing EOF in PAF image")
+
+        file_buf.seek(frame_offsets[0])
+
+        for i in range(frames):                
+            paf_frames.append(io.BytesIO(file_buf.read(frame_offsets[i+1]-frame_offsets[i])))
+
+        if RAW:        
+            outr = open(sys.argv[2], "wb")
+
+        if frames <= 1:
+            if RAW:
+                outr.write(pafDecodeFrame(paf_frames[0], width, height, bpp))
+            else:
+                output_file(pafDecodeFrame(paf_frames[0], width, height, bpp), sys.argv[2], width, height, bpp)
+        else:
+            canvas = pafDecodeFrame(paf_frames[0], width, height, bpp)
             if RAW:
                 outr.write(canvas)
             else:
-                output_file(canvas, f"{os.path.splitext(sys.argv[2])[0]}_{f+2}{os.path.splitext(sys.argv[2])[1]}", width, height, bpp)
+                output_file(canvas, f"{os.path.splitext(sys.argv[2])[0]}_1{os.path.splitext(sys.argv[2])[1]}", width, height, bpp)
+
+            for f in range(frames-1):            
+                canvas = pafXORBytes(canvas, pafDecodeFrame(paf_frames[f+1], width, height, bpp))
+                if RAW:
+                    outr.write(canvas)
+                else:
+                    output_file(canvas, f"{os.path.splitext(sys.argv[2])[0]}_{f+2}{os.path.splitext(sys.argv[2])[1]}", width, height, bpp)
