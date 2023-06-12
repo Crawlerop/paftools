@@ -17,10 +17,10 @@ RGB332 = b"\x00\x00\x00\x00\x00\x55\x00\x00\xaa\x00\x00\xff\x00\x24\x00\x00\x24\
 
 def output_file(data: bytes, output: str, width: int, height: int, bpp: int):
     if bpp == 1:
-        temp = Image.frombytes("L", (width + ((8 - (width % 8)) if (width % 8) != 8 else 0), height), bytes([0 if x == 1 else 255 for x in data] if MONOCHROME_INVERT else [255 if x == 1 else 0 for x in data]))                
+        temp = Image.frombytes("L", (width + ((8 - (width % 8)) if (width % 8) else 0), height), bytes([0 if x == 1 else 255 for x in data] if MONOCHROME_INVERT else [255 if x == 1 else 0 for x in data]))                
         temp.crop([0,0,width, height]).save(output)        
     elif bpp == 2:
-        temp = Image.frombytes("L", (width + ((4 - (width % 4)) if (width % 4) != 4 else 0), height), bytes(([0 if x >= 1 else 255 for x in data] if MONOCHROME_INVERT else [255 if x >= 1 else 0 for x in data]) if PAL_2BPP_IS_SINGLE else [PAL_2BPP_INVERT[x] for x in data] if MONOCHROME_INVERT else [PAL_2BPP[x] for x in data]))        
+        temp = Image.frombytes("L", (width + ((4 - (width % 4)) if (width % 4) else 0), height), bytes(([0 if x >= 1 else 255 for x in data] if MONOCHROME_INVERT else [255 if x >= 1 else 0 for x in data]) if PAL_2BPP_IS_SINGLE else [PAL_2BPP_INVERT[x] for x in data] if MONOCHROME_INVERT else [PAL_2BPP[x] for x in data]))        
         temp.crop([0,0,width, height]).save(output)        
     elif bpp == 8:
         temp = Image.frombytes("P", (width, height), data)
@@ -48,9 +48,9 @@ def rgb18to24(data: bytes):
 
 def pafDecodeFrame(file_buf: io.BytesIO, width: int, height: int, bpp: int):
     if bpp == 1:
-        width += ((8 - (width % 8)) if (width % 8) != 8 else 0)
+        width += ((8 - (width % 8)) if (width % 8) else 0)
     elif bpp == 2:
-        width += ((4 - (width % 4)) if (width % 4) != 4 else 0)        
+        width += ((4 - (width % 4)) if (width % 4) else 0)        
 
     multiplier = 1 if bpp in [1,2] else 4 if bpp == 18 else bpp//8
     out_buffer = io.BytesIO(bytes((width*height)*multiplier))
