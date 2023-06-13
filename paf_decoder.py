@@ -11,6 +11,8 @@ RAW = False
 MONOCHROME_INVERT = False
 PAL_2BPP_IS_SINGLE = False
 
+PAD_2BPP = False
+
 PAL_2BPP = [0, 0x60, 0xc0, 0xff]
 PAL_2BPP_INVERT = [x for x in reversed(PAL_2BPP)]
 
@@ -81,74 +83,83 @@ def pafDecodeFrame(file_buf: io.BytesIO, width: int, height: int, bpp: int):
         while file_buf.tell() < len(file_buf.getvalue()):
             length = 1
             pixel = 0
-            
-            while file_buf.tell() < len(file_buf.getvalue()):     
-                rle_type = struct.unpack(">B", file_buf.read(1))[0]                            
+                           
+            rle_type = struct.unpack(">B", file_buf.read(1))[0]                            
 
-                if rle_type >= 0x40 and rle_type < 0x80:
-                    if (rle_type >> 5) & 1:
-                        data2 = struct.unpack(">H", file_buf.read(2))[0]                                                
-                        
-                        length = ((rle_type & 0x1f) << 14) | data2 >> 2 if bpp == 2 else ((rle_type & 0x1f) << 15) | data2 >> 1
-                        pixel = data2 & 3 if bpp == 2 else data2 & 1                        
-                    else:
-                        data2 = struct.unpack(">B", file_buf.read(1))[0]
-                        
-                        length = ((rle_type & 0x1f) << 6) | data2 >> 2 if bpp == 2 else ((rle_type & 0x1f) << 7) | data2 >> 1
-                        pixel = data2 & 3 if bpp == 2 else data2 & 1
-                elif rle_type >= 0x80 and rle_type < 0xc0:                    
+            if rle_type >= 0x40 and rle_type < 0x80:
+                if (rle_type >> 5) & 1:
+                    data2 = struct.unpack(">H", file_buf.read(2))[0]                                                
+                    
+                    length = ((rle_type & 0x1f) << 14) | data2 >> 2 if bpp == 2 else ((rle_type & 0x1f) << 15) | data2 >> 1
+                    pixel = data2 & 3 if bpp == 2 else data2 & 1                        
+                else:
+                    data2 = struct.unpack(">B", file_buf.read(1))[0]
+                    
+                    length = ((rle_type & 0x1f) << 6) | data2 >> 2 if bpp == 2 else ((rle_type & 0x1f) << 7) | data2 >> 1
+                    pixel = data2 & 3 if bpp == 2 else data2 & 1
+            elif rle_type >= 0x80 and rle_type < 0xc0:                    
+                if bpp == 1:
+                    for i in range(6):                                           
+                        out_buffer.write(((rle_type >> (5-i)) & 1).to_bytes(1, "little"))
+
+                else:
+                    out_buffer.write(((rle_type >> 4) & 3).to_bytes(1, "little"))
+                    out_buffer.write(((rle_type >> 2) & 3).to_bytes(1, "little"))
+                    out_buffer.write((rle_type & 3).to_bytes(1, "little"))
+
+                continue
+            elif rle_type >= 0xc0:                      
+                f = file_buf.read(1)
+
+                if not f:
                     if bpp == 1:
-                        for i in range(6):                                           
-                            out_buffer.write(((rle_type >> (5-i)) & 1).to_bytes(1, "little"))
-
-                    else:
-                        out_buffer.write(((rle_type >> 4) & 3).to_bytes(1, "little"))
-                        out_buffer.write(((rle_type >> 2) & 3).to_bytes(1, "little"))
-                        out_buffer.write((rle_type & 3).to_bytes(1, "little"))
-
-                    continue
-                elif rle_type >= 0xc0:                      
-                    f = file_buf.read(1)
-
-                    if not f:
-                        if bpp == 1:
+                        if PAD_2BPP:
+                            #if ((rle_type >> 5) & 1) != 0: 
+                            #    out_buffer.write(((rle_type >> 5) & 1).to_bytes(1, "little"))                            
+                            pass
+                        else:
                             for i in range(6):                                           
                                 out_buffer.write(((rle_type >> (5-i)) & 1).to_bytes(1, "little"))
 
+                    else:
+                        if PAD_2BPP: 
+                            pass
+                            #if ((rle_type >> 4) & 3) != 0:
+                            #    out_buffer.write(((rle_type >> 4) & 3).to_bytes(1, "little"))
                         else:
                             out_buffer.write(((rle_type >> 4) & 3).to_bytes(1, "little"))
                             out_buffer.write(((rle_type >> 2) & 3).to_bytes(1, "little"))
                             out_buffer.write((rle_type & 3).to_bytes(1, "little"))
-                        
-                        continue
                     
-                    data = (rle_type & 0x3f) << 8 | f[0]
-
-                    if bpp == 1:
-                        for i in range(14):                                                 
-                            out_buffer.write(((data >> (13-i)) & 1).to_bytes(1, "little"))
-
-                    else:
-                        out_buffer.write(((data >> 12) & 3).to_bytes(1, "little"))
-                        out_buffer.write(((data >> 10) & 3).to_bytes(1, "little"))
-                        out_buffer.write(((data >> 8) & 3).to_bytes(1, "little"))
-                        out_buffer.write(((data >> 6) & 3).to_bytes(1, "little"))
-                        out_buffer.write(((data >> 4) & 3).to_bytes(1, "little"))                                            
-                        out_buffer.write(((data >> 2) & 3).to_bytes(1, "little"))
-                        out_buffer.write((data & 3).to_bytes(1, "little"))
-                        
-                    continue          
-                else:
-                    length = rle_type >> 2 if bpp == 2 else rle_type >> 1
-                    pixel = rle_type & 3 if bpp == 2 else rle_type & 1
-                             
-                out_buffer.write(pixel.to_bytes(1, "little")*length)
+                    continue
                 
-            if out_buffer.tell()<len(out_buffer.getvalue()):                            
-                padding = len(out_buffer.getvalue()) - out_buffer.tell()                
+                data = (rle_type & 0x3f) << 8 | f[0]
 
-                out_buffer.seek(out_buffer.tell() - 1)                        
-                out_buffer.write(out_buffer.read(1) * padding)
+                if bpp == 1:
+                    for i in range(14):                                                 
+                        out_buffer.write(((data >> (13-i)) & 1).to_bytes(1, "little"))
+
+                else:
+                    out_buffer.write(((data >> 12) & 3).to_bytes(1, "little"))
+                    out_buffer.write(((data >> 10) & 3).to_bytes(1, "little"))
+                    out_buffer.write(((data >> 8) & 3).to_bytes(1, "little"))
+                    out_buffer.write(((data >> 6) & 3).to_bytes(1, "little"))
+                    out_buffer.write(((data >> 4) & 3).to_bytes(1, "little"))                                            
+                    out_buffer.write(((data >> 2) & 3).to_bytes(1, "little"))
+                    out_buffer.write((data & 3).to_bytes(1, "little"))
+                    
+                continue          
+            else:
+                length = rle_type >> 2 if bpp == 2 else rle_type >> 1
+                pixel = rle_type & 3 if bpp == 2 else rle_type & 1
+                            
+            out_buffer.write(pixel.to_bytes(1, "little")*length)
+                
+        if out_buffer.tell()<len(out_buffer.getvalue()):                            
+            padding = len(out_buffer.getvalue()) - out_buffer.tell()                
+
+            out_buffer.seek(out_buffer.tell() - 1)                        
+            out_buffer.write(out_buffer.read(1) * padding)
     else:
         while file_buf.tell() < len(file_buf.getvalue()):       
             length = 1        
@@ -299,6 +310,8 @@ class __PAFFrame():
         self.bpp = bpp
         self.image = image
 
+doXOR = False
+
 def loadPAF(file_buf):
     assert file_buf.read(3) == b"PAF", "Not a valid PAF image."
 
@@ -357,7 +370,7 @@ def loadPAF(file_buf):
     canvas = None
 
     for frame in paf_frames:            
-        if isStart:
+        if isStart or not doXOR:
             canvas = pafDecodeFrame(frame, width, height, bpp)
             isStart = False
         else:
@@ -407,14 +420,83 @@ if __name__ == "__main__":
             photo.image = imgTk
             photo.create_image(photo.winfo_width()/2,photo.winfo_height()/2,anchor=tk.CENTER,image=imgTk)
 
+        class gifExportDialog(tk.Frame):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                # self allow the variable to be used anywhere in the class
+                self.set = False
+                self.duration = -1
+                self.loop = -1
+                self.initUI()             
+
+            def __checkDigit(self, P):                
+                if str.isdigit(P) or P == "" or P == "-" or P == "-1":
+                    return True
+                else:
+                    return False
+
+            def initUI(self):
+
+                checkDigit = (self.register(self.__checkDigit))                                
+
+                self.master.title("GIF Export Settings")
+                self.pack(fill=tk.BOTH, expand=True)
+
+                frame1 = tk.Frame(self)
+                frame1.pack(fill=tk.X)
+
+                lbl1 = tk.Label(frame1, text="Duration", width=6)
+                lbl1.pack(side=tk.LEFT, padx=5, pady=10)
+
+                self.entry1 = tk.Entry(frame1, validate='all', validatecommand=(checkDigit, '%P'))
+                self.entry1.insert(0, "100")
+                
+                self.entry1.pack(fill=tk.X, padx=5, expand=True)
+
+                frame2 = tk.Frame(self)
+                frame2.pack(fill=tk.X)
+
+                lbl2 = tk.Label(frame2, text="Loop Count", width=6)
+                lbl2.pack(side=tk.LEFT, padx=5, pady=10)
+
+                self.entry2 = tk.Entry(frame2, validate='all', validatecommand=(checkDigit, '%P'))
+                self.entry2.insert(0, "0")
+
+                self.entry2.pack(fill=tk.X, padx=5, expand=True)
+
+                frame3 = tk.Frame(self)
+                frame3.pack(fill=tk.X)
+
+                # Command tells the form what to do when the button is clicked
+                btn = tk.Button(frame3, text="OK", command=self.onSubmit)
+                btn.pack(side=tk.LEFT, padx=5, pady=10)
+
+                btn2 = tk.Button(frame3, text="Cancel", command=self.onCancel)
+                btn2.pack(side=tk.RIGHT, padx=5, pady=10)
+
+            def onSubmit(self):
+                self.set = True
+                self.duration = int(self.entry1.get())
+                self.loop = int(self.entry2.get())
+                self.master.destroy()
+
+            def onCancel(self):
+                self.master.destroy()                
+
         def openPaf():
-            global imgTk, paf_images, curFrame
+            global imgTk, paf_images, curFrame, MONOCHROME_INVERT, PAL_2BPP_IS_SINGLE, PAD_2BPP, doXOR
+
+            MONOCHROME_INVERT = mono_invert.get()
+            PAL_2BPP_IS_SINGLE = pal_2bpp_1bpp.get()
+            PAD_2BPP = pad_2bpp_data.get()
+            doXOR = do_xor.get()
 
             file = filedialog.askopenfile("rb", filetypes=[("PAF image", "*.paf")])            
             if file != None:                  
                 photo.delete("all")
                 paf_images = None
                 imgTk = None
+                file_menu.entryconfig("Save", state="disabled")
 
                 try:
                     paf_images = [x for x in loadPAF(file)]
@@ -423,27 +505,92 @@ if __name__ == "__main__":
 
                     curFrame = 0                                                                  
                     setPafFrame(0)
+
+                    file_menu.entryconfig("Save", state="normal")
                 except Exception as e:                    
                     messagebox.showerror("PAF Viewer", e)
 
+        def savePaf():
+            global paf_images
+
+            file = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG image", "*.png"), ("BMP image", "*.bmp"), ("JPG image", "*.jpg"), ("RAW image", "*.raw"), ("GIF image", "*.gif")])           
+            if file:
+                if len(paf_images) <= 1:
+                    if file.endswith(".bmp"):
+                        paf_images[0].image.convert("RGB").save(file)
+                    elif file.endswith(".jpg"):
+                        paf_images[0].image.convert("RGB").save(file)
+                    elif file.endswith(".raw"):
+                        open(file, "wb").write(paf_images[0].image.tobytes())
+                    elif file.endswith(".gif"):
+                        paf_images[0].image.save(file)
+                    else:
+                        if not file.endswith(".png"): file += ".png"
+                        paf_images[0].image.save(file)                                            
+                else:
+                    if file.endswith(".raw"):                        
+                        temp = open(file, "wb")
+                        for f in paf_images:
+                            temp.write(f.image.tobytes())
+                    elif file.endswith(".gif"):
+                        frames = [x.image for x in paf_images]   
+
+                        gifSettingWindow = tk.Toplevel()
+                        gifSetting = gifExportDialog(gifSettingWindow)
+                        
+                        gifSettingWindow.grab_set()
+                        gifSettingWindow.wait_window()
+
+                        if not gifSetting.set: return
+
+                        if gifSetting.loop == -1:
+                            frames[0].save(file, save_all=True, append_images=frames[1:], duration=gifSetting.duration, include_color_table=True)
+                        else:
+                            frames[0].save(file, save_all=True, append_images=frames[1:], duration=gifSetting.duration, loop=gifSetting.loop, include_color_table=True)
+                    else:
+                        count = 0
+                        for f in paf_images:
+                            count += 1
+                            frame_file = f"{os.path.splitext(file)[0]}_{count}{os.path.splitext(file)[1]}"                            
+
+                            if file.endswith(".bmp"):
+                                f.image.convert("RGB").save(frame_file)
+                            elif file.endswith(".jpg"):
+                                f.image.convert("RGB").save(frame_file)                                                    
+                            else:
+                                if not frame_file.endswith(".png"): frame_file += ".png"
+                                f.image.save(frame_file)   
+                    
+
         root = tk.Tk()       
         root.geometry("256x256") 
-        root.title = "PAF Viewer"
+        root.title("PAF Viewer")
 
         root.bind("<KeyPress>", handleKeyboard)
 
         menu_bar = tk.Menu(root)
         file_menu = tk.Menu(menu_bar, tearoff=0)
         file_menu.add_command(label="Open", command=openPaf)
+        file_menu.add_command(label="Save", command=savePaf, state="disabled")        
         file_menu.add_command(label="Exit", command=root.quit)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
 
+        mono_invert = tk.BooleanVar()
+        pal_2bpp_1bpp = tk.BooleanVar()
+        pad_2bpp_data = tk.BooleanVar()
+        do_xor = tk.BooleanVar(value=1)
+
         option_menu = tk.Menu(menu_bar, tearoff=0)
-        photo = PAFCanvas(root, bg="white", width=0, height=0)
-        photo.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        option_menu.add_checkbutton(label="Invert grayscale palette", onvalue=1, offvalue=0, variable=mono_invert)
+        option_menu.add_checkbutton(label="Force 1bpp on 2bpp image", onvalue=1, offvalue=0, variable=pal_2bpp_1bpp)
+        option_menu.add_checkbutton(label="2bpp padding", onvalue=1, offvalue=0, variable=pad_2bpp_data)
+        option_menu.add_checkbutton(label="Do frame XOR", onvalue=1, offvalue=0, variable=do_xor)
 
         menu_bar.add_cascade(label="Option", menu=option_menu)
+
+        photo = PAFCanvas(root, bg="white", width=0, height=0)
+        photo.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         root.config(menu=menu_bar)
 
