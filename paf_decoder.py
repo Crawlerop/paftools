@@ -165,14 +165,14 @@ def pafDecodeFrame(file_buf: io.BytesIO, width: int, height: int, bpp: int):
             length = 1        
             rle_type = struct.unpack(">B", file_buf.read(1))[0]        
 
-            if rle_type >= 193 and rle_type < 224:
-                length = rle_type & 0x1f
+            if rle_type >= 192 and rle_type < 224:
+                length = rle_type & 0x1f # 1 - 31
 
             elif rle_type >= 224 and rle_type < 240:                
-                length = ((rle_type & 0xf) << 8) | file_buf.read(1)[0]
+                length = ((rle_type & 0xf) << 8) | file_buf.read(1)[0] # 1 - 4095
 
-            elif rle_type >= 240:
-                length = ((rle_type & 0xf) << 16) | struct.unpack(">H", file_buf.read(2))[0]            
+            elif rle_type >= 240: 
+                length = ((rle_type & 0xf) << 16) | struct.unpack(">H", file_buf.read(2))[0] # 1 - 1048575
                 
             else:
                 file_buf.seek(file_buf.tell()-1)
@@ -313,7 +313,7 @@ class __PAFFrame():
 doXOR = False
 
 def loadPAF(file_buf):
-    assert file_buf.read(3) == b"PAF", "Not a valid PAF image."
+    assert file_buf.read(3) in [b"PAF", b"RLA"], "Not a valid PAF image."
 
     version = int(file_buf.read(1))
     assert version in [1,2,3], f"PAF{version} images is not supported."
@@ -358,7 +358,7 @@ def loadPAF(file_buf):
         frame_offsets.append(struct.unpack(">L", file_buf.read(4))[0])
 
     file_buf.seek(frame_offsets[frames])
-    if (file_buf.read(9) != b"EndOfPAF\0"):
+    if (file_buf.read(9) not in [b"EndOfPAF\0", b"RLAED\0"]):
         logging.warning("Missing EOF in PAF image")
 
     file_buf.seek(frame_offsets[0])
@@ -491,7 +491,7 @@ if __name__ == "__main__":
             PAD_2BPP = pad_2bpp_data.get()
             doXOR = do_xor.get()
 
-            file = filedialog.askopenfile("rb", filetypes=[("PAF image", "*.paf")])            
+            file = filedialog.askopenfile("rb", filetypes=[("PAF image", "*.paf;*.rla")])            
             if file != None:                  
                 photo.delete("all")
                 paf_images = None
